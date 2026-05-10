@@ -1,6 +1,7 @@
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
+const cors = require('cors');
 const axios = require('axios');
 require('dotenv').config();
 
@@ -148,6 +149,51 @@ io.on('connection', (socket) => {
 
       // Broadcast to everyone ELSE in the room
       socket.to(roomId).emit('sync_state', { action, payload, state: room });
+    } catch (err) {
+      console.error(err);
+    }
+  });
+
+  // 3. Role Management
+  socket.on('promote_user', ({ roomId, targetSocketId, newRole }) => {
+    try {
+      const room = rooms.get(roomId);
+      if (!room) return;
+
+      const requester = room.users.find(u => u.socketId === socket.id);
+      if (!requester || requester.role !== 'Host') {
+        return socket.emit('error', 'Only the Host can promote users.');
+      }
+
+      const targetUser = room.users.find(u => u.socketId === targetSocketId);
+      if (targetUser) {
+        targetUser.role = newRole;
+        io.to(roomId).emit('user_joined', room.users); // Re-broadcast user list
+        console.log(`User ${targetUser.username} promoted to ${newRole}`);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  });
+
+  // 4. Chat System
+  socket.on('send_message', ({ roomId, message }) => {
+    try {
+      const room = rooms.get(roomId);
+      if (!room) return;
+
+      const user = room.users.find(u => u.socketId === socket.id);
+      if (!user) return;
+
+      const chatMessage = {
+        id: Math.random().toString(36).substring(2, 9),
+        username: user.username,
+        text: message,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        role: user.role
+      };
+
+      io.to(roomId).emit('new_message', chatMessage);
     } catch (err) {
       console.error(err);
     }
