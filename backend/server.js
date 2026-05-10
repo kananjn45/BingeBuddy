@@ -1,7 +1,7 @@
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
-const cors = require('cors');
+const axios = require('axios');
 require('dotenv').config();
 
 const app = express();
@@ -10,8 +10,54 @@ const server = http.createServer(app);
 app.use(cors());
 app.use(express.json());
 
-// In-memory data store for rooms
+// In-memory data store for rooms and search cache
 const rooms = new Map();
+const searchCache = new Map();
+
+// YouTube Search Proxy Endpoint
+app.get('/api/search', async (req, res) => {
+  const { q } = req.query;
+  const API_KEY = process.env.YOUTUBE_API_KEY;
+
+  if (!q) return res.status(400).json({ error: 'Query is required' });
+  if (!API_KEY || API_KEY === 'YOUR_YOUTUBE_API_KEY_HERE') {
+    return res.status(500).json({ error: 'YouTube API Key not configured on server' });
+  }
+
+  // Check cache (TTL 24 hours)
+  const cached = searchCache.get(q.toLowerCase());
+  if (cached && (Date.now() - cached.timestamp < 24 * 60 * 60 * 1000)) {
+    console.log('Serving from cache:', q);
+    return res.json(cached.data);
+  }
+
+  try {
+    const response = await axios.get('https://www.googleapis.com/youtube/v3/search', {
+      params: {
+        part: 'snippet',
+        maxResults: 12,
+        q: q,
+        type: 'video',
+        key: API_KEY
+      }
+    });
+
+    const formattedData = response.data.items.map(item => ({
+      id: item.id.videoId,
+      title: item.snippet.title,
+      thumbnail: item.snippet.thumbnails.medium.url,
+      channel: item.snippet.channelTitle
+    }));
+
+    // Save to cache
+    searchCache.set(q.toLowerCase(), { data: formattedData, timestamp: Date.now() });
+    
+    res.json(formattedData);
+  } catch (error) {
+    console.error('YouTube API Error:', error.response?.data || error.message);
+    res.status(500).json({ error: 'Failed to fetch from YouTube' });
+  }
+});
 
 const io = new Server(server, {
   cors: {
