@@ -2,10 +2,7 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
-const mongoose = require('mongoose');
 require('dotenv').config();
-
-const Room = require('./models/Room');
 
 const app = express();
 const server = http.createServer(app);
@@ -13,10 +10,8 @@ const server = http.createServer(app);
 app.use(cors());
 app.use(express.json());
 
-mongoose.connect(process.env.DB_URL || 'mongodb://localhost:27017/bingebuddy', {
-  // Options can be added if using older Mongoose, but modern Mongoose works without them
-}).then(() => console.log('MongoDB connected'))
-  .catch(err => console.error('MongoDB connection error:', err));
+// In-memory data store for rooms
+const rooms = new Map();
 
 const io = new Server(server, {
   cors: {
@@ -29,28 +24,38 @@ io.on('connection', (socket) => {
   console.log('A user connected:', socket.id);
 
   // 1. Join Room
-  socket.on('join_room', async ({ roomId, username }) => {
+  socket.on('join_room', ({ roomId, username }) => {
     socket.join(roomId);
     
     try {
-      let room = await Room.findOne({ roomId });
-      
+      let room = rooms.get(roomId);
       let role = 'Participant';
+      
       if (!room) {
         // First user creates the room and becomes Host
         role = 'Host';
-        room = new Room({
+        room = {
           roomId,
-          videoId: '', // default empty
-          users: []
-        });
-      } else if (room.users.length === 0) {
-        role = 'Host';
+          videoId: '', 
+          isPlaying: false,
+          currentTime: 0,
+          users: [{ socketId: socket.id, username, role }]
+        };
+        rooms.set(roomId, room);
+      } else {
+        if (room.users.length === 0) {
+          role = 'Host';
+        }
+        
+        // Check if user is already in the room (e.g., React Strict Mode double mount)
+        const existingUserIndex = room.users.findIndex(u => u.socketId === socket.id);
+        if (existingUserIndex !== -1) {
+          room.users[existingUserIndex].username = username;
+          role = room.users[existingUserIndex].role; // Retain their original role
+        } else {
+          room.users.push({ socketId: socket.id, username, role });
+        }
       }
-
-      const newUser = { socketId: socket.id, username, role };
-      room.users.push(newUser);
-      await room.save();
 
       // Send current state to the user who just joined
       socket.emit('room_state', {
@@ -72,9 +77,9 @@ io.on('connection', (socket) => {
   });
 
   // 2. Playback Sync
-  socket.on('sync_action', async ({ roomId, action, payload }) => {
+  socket.on('sync_action', ({ roomId, action, payload }) => {
     try {
-      const room = await Room.findOne({ roomId });
+      const room = rooms.get(roomId);
       if (!room) return;
 
       const user = room.users.find(u => u.socketId === socket.id);
@@ -94,7 +99,6 @@ io.on('connection', (socket) => {
          room.isPlaying = false;
          room.currentTime = 0;
       }
-      await room.save();
 
       // Broadcast to everyone ELSE in the room
       socket.to(roomId).emit('sync_state', { action, payload, state: room });
@@ -103,27 +107,48 @@ io.on('connection', (socket) => {
     }
   });
 
-  // 3. Disconnect
-  socket.on('disconnect', async () => {
-    console.log('User disconnected:', socket.id);
+  // Handle explicit leave
+  socket.on('leave_room', ({ roomId }) => {
     try {
-      // Find room containing this user
-      const room = await Room.findOne({ 'users.socketId': socket.id });
+      const room = rooms.get(roomId);
       if (room) {
-        // Remove user
         room.users = room.users.filter(u => u.socketId !== socket.id);
         
-        // Handle Host leaving
         if (room.users.length > 0) {
            const hasHost = room.users.some(u => u.role === 'Host');
            if (!hasHost) {
-              room.users[0].role = 'Host'; // Promote first remaining user to Host
+              room.users[0].role = 'Host'; 
            }
-           await room.save();
            io.to(room.roomId).emit('user_left', room.users);
         } else {
-           // Delete room if empty
-           await Room.deleteOne({ roomId: room.roomId });
+           rooms.delete(roomId);
+        }
+      }
+      socket.leave(roomId);
+    } catch (err) {
+      console.error(err);
+    }
+  });
+
+  // 3. Disconnect
+  socket.on('disconnect', () => {
+    console.log('User disconnected:', socket.id);
+    try {
+      // Find room containing this user
+      for (const [roomId, room] of rooms.entries()) {
+        const userExists = room.users.some(u => u.socketId === socket.id);
+        if (userExists) {
+          room.users = room.users.filter(u => u.socketId !== socket.id);
+          
+          if (room.users.length > 0) {
+             const hasHost = room.users.some(u => u.role === 'Host');
+             if (!hasHost) {
+                room.users[0].role = 'Host';
+             }
+             io.to(roomId).emit('user_left', room.users);
+          } else {
+             rooms.delete(roomId);
+          }
         }
       }
     } catch (err) {
@@ -135,5 +160,5 @@ io.on('connection', (socket) => {
 const PORT = process.env.PORT || 5000;
 
 server.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+  console.log(`Server is running on port ${PORT} (Using In-Memory Storage)`);
 });

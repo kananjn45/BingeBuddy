@@ -1,9 +1,44 @@
 @import "tailwindcss";
 
 @theme {
-  --font-sans: 'Inter', sans-serif;
+  --font-sans: 'Spline Sans', sans-serif;
+  
+  --color-primary: #E57373;
+  --color-secondary: #A89F94;
+  --color-tertiary: #24A978;
+  --color-neutral-dark: #333333;
+  --color-app-bg: #F8F7F6;
 }
 
 body {
-  @apply bg-slate-900 text-slate-50 antialiased;
+  @apply bg-app-bg text-neutral-dark antialiased selection:bg-primary/20;
+}
+
+.card-shadow {
+  box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.05);
+}
+
+.input-style {
+  @apply w-full px-4 py-3 bg-white border border-secondary/20 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-all placeholder:text-secondary/50 text-neutral-dark;
+}
+
+.btn-primary {
+  @apply px-8 py-3 bg-primary hover:bg-[#D46262] text-white font-semibold rounded-xl transition-all active:scale-[0.98] shadow-lg shadow-primary/20;
+}
+
+.btn-outline {
+  @apply px-8 py-3 bg-white border border-secondary/30 hover:bg-slate-50 text-neutral-dark font-semibold rounded-xl transition-all active:scale-[0.98];
+}
+
+/* Custom scrollbar for light theme */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-secondary/20 rounded-full hover:bg-secondary/40 transition-colors;
 }
